@@ -44,7 +44,7 @@ jobs:
           kill -0 "$pid"
           kill "$pid"
           test -f "$home/library.json"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: Paste.app
           path: build/Paste.app
