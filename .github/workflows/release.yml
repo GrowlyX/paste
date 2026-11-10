@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    runs-on: macos-26
+    env:
+      VERSION: ${{ github.ref_name }}
+      HAS_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: import Developer ID certificate
+        id: cert
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        if: env.HAS_CERT == 'true'
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          pw=$(uuidgen)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$pw" "$kc"
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: build
+        env:
+          SIGN_IDENTITY: ${{ steps.cert.outputs.signed == 'true' && secrets.DEVELOPER_ID_IDENTITY || '-' }}
+        run: |
+          export VERSION="${VERSION#v}"
+          XCODE_PATH="$(dirname "$(dirname "$(xcode-select -p)")")" scripts/build.sh --zip
+
+      - name: notarize
+        if: steps.cert.outputs.signed == 'true'
+        env:
+          KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$KEY_P8" | base64 --decode > "$RUNNER_TEMP/key.p8"
+          zip=$(ls build/Paste-*.zip)
+          xcrun notarytool submit "$zip" --key "$RUNNER_TEMP/key.p8" --key-id "$KEY_ID" --issuer "$ISSUER_ID" --wait
+          xcrun stapler staple build/Paste.app
+          rm "$zip"
+          ditto -c -k --keepParent build/Paste.app "$zip"
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build/Paste-*.zip --title "Paste ${GITHUB_REF_NAME#v}" --generate-notes

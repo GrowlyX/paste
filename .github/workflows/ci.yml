@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: toolchain
+        run: |
+          xcode-select -p
+          swift --version
+      - name: build Paste.app
+        run: XCODE_PATH="$(dirname "$(dirname "$(xcode-select -p)")")" scripts/build.sh
+      - name: bundle is valid
+        run: |
+          codesign --verify --deep --strict build/Paste.app
+          for key in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion LSUIElement; do
+            /usr/libexec/PlistBuddy -c "Print :$key" build/Paste.app/Contents/Info.plist
+          done
+          test -f build/Paste.app/Contents/Resources/AppIcon.icns
+          test -f build/Paste.app/Contents/Resources/Copy.wav
+          test -f build/Paste.app/Contents/Resources/Paste.wav
+      - name: launches and stays up
+        run: |
+          home=$(mktemp -d)
+          PASTE_HOME="$home" PASTE_DEBUG=1 build/Paste.app/Contents/MacOS/Paste &
+          pid=$!
+          sleep 8
+          kill -0 "$pid"
+          kill "$pid"
+          test -f "$home/library.json"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Paste.app
+          path: build/Paste.app

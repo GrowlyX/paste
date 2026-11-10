@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+*.xcodeproj/
+xcuserdata/
+# Personal-use font: download it yourself, never commit it (see docs/development.md).
+assets/*.otf
+assets/*.ttf
